@@ -1,8 +1,4 @@
-import {
-  CURSOR_MODEL_FAMILY_OPTIONS,
-  type ProviderKind,
-  type ServerProvider,
-} from "@t3tools/contracts";
+import { type ProviderKind, type ServerProvider } from "@t3tools/contracts";
 import { page } from "vitest/browser";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
@@ -112,6 +108,58 @@ const TEST_PROVIDERS: ReadonlyArray<ServerProvider> = [
       },
     ],
   },
+  {
+    provider: "cursor",
+    enabled: true,
+    installed: true,
+    version: "1.0.0",
+    status: "ready",
+    authStatus: "authenticated",
+    checkedAt: new Date().toISOString(),
+    models: [
+      {
+        slug: "composer-2",
+        name: "Composer 2",
+        isCustom: false,
+        capabilities: {
+          reasoningEffortLevels: [],
+          supportsFastMode: true,
+          supportsThinkingToggle: false,
+          contextWindowOptions: [],
+          promptInjectedEffortLevels: [],
+        },
+      },
+      {
+        slug: "gpt-5.3-codex",
+        name: "Codex 5.3",
+        isCustom: false,
+        capabilities: {
+          reasoningEffortLevels: [
+            effort("low"),
+            effort("normal", true),
+            effort("high"),
+            effort("xhigh"),
+          ],
+          supportsFastMode: true,
+          supportsThinkingToggle: false,
+          contextWindowOptions: [],
+          promptInjectedEffortLevels: [],
+        },
+      },
+      {
+        slug: "claude-4.6-opus",
+        name: "Claude Opus 4.6",
+        isCustom: false,
+        capabilities: {
+          reasoningEffortLevels: [],
+          supportsFastMode: false,
+          supportsThinkingToggle: true,
+          contextWindowOptions: [],
+          promptInjectedEffortLevels: [],
+        },
+      },
+    ],
+  },
 ];
 
 async function mountPicker(props: {
@@ -132,7 +180,6 @@ async function mountPicker(props: {
       props.provider,
       props.model,
     ),
-    cursor: [...CURSOR_MODEL_FAMILY_OPTIONS],
   };
   const screen = await render(
     <ProviderModelPicker
@@ -141,7 +188,6 @@ async function mountPicker(props: {
       lockedProvider={props.lockedProvider}
       providers={providers}
       modelOptionsByProvider={modelOptionsByProvider}
-      cursorModelOptions={null}
       triggerVariant={props.triggerVariant}
       onProviderModelChange={onProviderModelChange}
     />,
@@ -249,7 +295,7 @@ describe("ProviderModelPicker", () => {
     }
   });
 
-  it("keeps Cursor submenu values as family keys (traits resolve the CLI slug)", async () => {
+  it("maps concrete Cursor slugs onto the server-provided model options", async () => {
     const mounted = await mountPicker({
       provider: "cursor",
       model: "claude-4.6-opus-high-thinking",

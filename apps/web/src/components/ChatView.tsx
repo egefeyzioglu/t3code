@@ -2,7 +2,6 @@ import {
   type ApprovalRequestId,
   DEFAULT_MODEL_BY_PROVIDER,
   type ClaudeCodeEffort,
-  type CursorModelOptions,
   type MessageId,
   type ModelSelection,
   type ProjectScript,
@@ -22,14 +21,7 @@ import {
   ProviderInteractionMode,
   RuntimeMode,
 } from "@t3tools/contracts";
-import {
-  applyClaudePromptEffortPrefix,
-  getDefaultModel,
-  isCursorModelFamilySlug,
-  normalizeModelSlug,
-  parseCursorModelSelection,
-  resolveModelSlugForProvider,
-} from "@t3tools/shared/model";
+import { applyClaudePromptEffortPrefix, normalizeModelSlug } from "@t3tools/shared/model";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDebouncedValue } from "@tanstack/react-pacer";
@@ -283,9 +275,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const nonPersistedComposerImageIds = composerDraft.nonPersistedImageIds;
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
   const setComposerDraftModelSelection = useComposerDraftStore((store) => store.setModelSelection);
-  const setComposerDraftProviderModelOptions = useComposerDraftStore(
-    (store) => store.setProviderModelOptions,
-  );
   const setComposerDraftRuntimeMode = useComposerDraftStore((store) => store.setRuntimeMode);
   const setComposerDraftInteractionMode = useComposerDraftStore(
     (store) => store.setInteractionMode,
@@ -3129,33 +3118,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
         providerStatuses,
         model,
       );
-      if (
-        resolvedProvider === "cursor" &&
-        isCursorModelFamilySlug(resolvedModel) &&
-        activeThread.id.length > 0
-      ) {
-        const prevDraft = useComposerDraftStore.getState().draftsByThreadId[activeThread.id];
-        const prevCursorSelection = prevDraft?.modelSelectionByProvider?.cursor;
-        const prevModelRaw =
-          prevCursorSelection?.model ??
-          (typeof activeThread.modelSelection?.model === "string"
-            ? resolveModelSlugForProvider("cursor", activeThread.modelSelection.model)
-            : null) ??
-          getDefaultModel("cursor");
-        const prevResolved = resolveAppModelSelection(
-          "cursor",
-          settings,
-          providerStatuses,
-          prevModelRaw,
-        );
-        const prevCursorOptions = prevCursorSelection?.options as CursorModelOptions | undefined;
-        const prevFamily = parseCursorModelSelection(prevResolved, prevCursorOptions).family;
-        if (prevFamily !== resolvedModel) {
-          setComposerDraftProviderModelOptions(activeThread.id, "cursor", null, {
-            persistSticky: true,
-          });
-        }
-      }
       const nextModelSelection: ModelSelection = {
         provider: resolvedProvider,
         model: resolvedModel,
@@ -3169,7 +3131,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
       lockedProvider,
       scheduleComposerFocus,
       setComposerDraftModelSelection,
-      setComposerDraftProviderModelOptions,
       setStickyComposerModelSelection,
       providerStatuses,
       settings,
@@ -3847,11 +3808,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
                           lockedProvider={lockedProvider}
                           providers={providerStatuses}
                           modelOptionsByProvider={modelOptionsByProvider}
-                          cursorModelOptions={
-                            selectedProvider === "cursor"
-                              ? (composerModelOptions?.cursor ?? null)
-                              : null
-                          }
                           {...(composerProviderState.modelPickerIconClassName
                             ? {
                                 activeProviderIconClassName:
