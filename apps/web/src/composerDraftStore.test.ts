@@ -91,7 +91,7 @@ function resetComposerDraftStore() {
 }
 
 function modelSelection(
-  provider: "codex" | "claudeAgent",
+  provider: "codex" | "claudeAgent" | "cursor",
   model: string,
   options?: ModelSelection["options"],
 ): ModelSelection {
@@ -955,6 +955,33 @@ describe("composerDraftStore modelSelection", () => {
       modelSelection("codex", "gpt-5.4", {
         reasoningEffort: "high",
         fastMode: false,
+      }),
+    );
+  });
+
+  it("keeps explicit Cursor reset overrides on the selection", () => {
+    const store = useComposerDraftStore.getState();
+
+    store.setModelSelection(
+      threadRef,
+      modelSelection("cursor", "claude-opus-4-6", {
+        reasoning: "xhigh",
+        fastMode: true,
+        thinking: false,
+      }),
+    );
+
+    store.setProviderModelOptions(threadRef, "cursor", {
+      reasoning: "medium",
+      fastMode: false,
+      thinking: true,
+    });
+
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.modelSelectionByProvider.cursor).toEqual(
+      modelSelection("cursor", "claude-opus-4-6", {
+        reasoning: "medium",
+        fastMode: false,
+        thinking: true,
       }),
     );
   });

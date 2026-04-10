@@ -449,8 +449,8 @@ export function resolveCursorAcpConfigUpdates(
   const fastOption = configOptions.find(
     (option) => option.category === "model_config" && isCursorFastConfigOption(option),
   );
-  if (fastOption && modelOptions?.fastMode === true) {
-    const value = findCursorBooleanConfigValue(fastOption, true);
+  if (fastOption && typeof modelOptions?.fastMode === "boolean") {
+    const value = findCursorBooleanConfigValue(fastOption, modelOptions.fastMode);
     if (value !== undefined) {
       updates.push({ configId: fastOption.id, value });
     }

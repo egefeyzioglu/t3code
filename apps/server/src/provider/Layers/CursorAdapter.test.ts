@@ -857,4 +857,55 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       yield* adapter.stopSession(threadId);
     }),
   );
+
+  it.effect("clears prior fast mode in-session when the next turn sets fastMode: false", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const serverSettings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-fast-mode-reset");
+      const tempDir = yield* Effect.promise(() => mkdtemp(path.join(os.tmpdir(), "cursor-acp-")));
+      const requestLogPath = path.join(tempDir, "requests.ndjson");
+      const argvLogPath = path.join(tempDir, "argv.txt");
+      yield* Effect.promise(() => writeFile(requestLogPath, "", "utf8"));
+      const wrapperPath = yield* Effect.promise(() =>
+        makeProbeWrapper(requestLogPath, argvLogPath),
+      );
+      yield* serverSettings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+
+      yield* adapter.startSession({
+        threadId,
+        provider: "cursor",
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { provider: "cursor", model: "composer-2" },
+      });
+
+      yield* adapter.sendTurn({
+        threadId,
+        input: "first turn with fast mode",
+        attachments: [],
+        modelSelection: { provider: "cursor", model: "composer-2", options: { fastMode: true } },
+      });
+
+      yield* adapter.sendTurn({
+        threadId,
+        input: "second turn without fast mode",
+        attachments: [],
+        modelSelection: { provider: "cursor", model: "composer-2", options: { fastMode: false } },
+      });
+
+      const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+      const fastConfigRequests = requests.filter(
+        (entry) =>
+          entry.method === "session/set_config_option" &&
+          (entry.params as Record<string, unknown> | undefined)?.configId === "fast",
+      );
+      assert.isAtLeast(fastConfigRequests.length, 2, "should set fast mode on and then off");
+
+      const lastFastConfig = fastConfigRequests[fastConfigRequests.length - 1];
+      assert.equal((lastFastConfig?.params as Record<string, unknown>)?.value, "false");
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
 });

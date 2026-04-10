@@ -88,6 +88,22 @@ const CURSOR_MODELS: ReadonlyArray<ServerProviderModel> = [
       promptInjectedEffortLevels: [],
     },
   },
+  {
+    slug: "claude-opus-4-6",
+    name: "Opus 4.6",
+    isCustom: false,
+    capabilities: {
+      reasoningEffortLevels: [
+        { value: "low", label: "Low" },
+        { value: "medium", label: "Medium" },
+        { value: "high", label: "High", isDefault: true },
+      ],
+      supportsFastMode: false,
+      supportsThinkingToggle: true,
+      contextWindowOptions: [],
+      promptInjectedEffortLevels: [],
+    },
+  },
 ];
 
 const CLAUDE_MODELS: ReadonlyArray<ServerProviderModel> = [
@@ -405,7 +421,7 @@ describe("getComposerProviderState", () => {
     });
   });
 
-  it("drops default Cursor reasoning from dispatch options", () => {
+  it("preserves default Cursor reasoning in dispatch options so prior overrides can be cleared", () => {
     const state = getComposerProviderState({
       provider: "cursor",
       model: "gpt-5.3-codex",
@@ -419,7 +435,7 @@ describe("getComposerProviderState", () => {
     expect(state).toEqual({
       provider: "cursor",
       promptEffort: "medium",
-      modelOptionsForDispatch: undefined,
+      modelOptionsForDispatch: { reasoning: "medium" },
     });
   });
 
@@ -443,6 +459,48 @@ describe("getComposerProviderState", () => {
         contextWindow: "1m",
       },
     });
+  });
+
+  it("preserves explicit default Cursor reasoning so deepMerge can clear a prior non-default", () => {
+    const state = getComposerProviderState({
+      provider: "cursor",
+      model: "gpt-5.4",
+      models: CURSOR_MODELS,
+      prompt: "",
+      modelOptions: {
+        cursor: { reasoning: "medium" },
+      },
+    });
+
+    expect(state.modelOptionsForDispatch).toHaveProperty("reasoning", "medium");
+  });
+
+  it("preserves explicit Cursor fastMode: false so deepMerge can overwrite a prior true", () => {
+    const state = getComposerProviderState({
+      provider: "cursor",
+      model: "composer-2",
+      models: CURSOR_MODELS,
+      prompt: "",
+      modelOptions: {
+        cursor: { fastMode: false },
+      },
+    });
+
+    expect(state.modelOptionsForDispatch).toHaveProperty("fastMode", false);
+  });
+
+  it("preserves explicit Cursor thinking: true so deepMerge can overwrite a prior false", () => {
+    const state = getComposerProviderState({
+      provider: "cursor",
+      model: "claude-opus-4-6",
+      models: CURSOR_MODELS,
+      prompt: "",
+      modelOptions: {
+        cursor: { thinking: true },
+      },
+    });
+
+    expect(state.modelOptionsForDispatch).toHaveProperty("thinking", true);
   });
 
   it("preserves Claude default effort explicitly in dispatch options", () => {

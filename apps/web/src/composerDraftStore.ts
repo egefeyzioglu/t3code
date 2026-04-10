@@ -626,8 +626,18 @@ function normalizeProviderModelOptions(
     (CURSOR_REASONING_OPTIONS as readonly string[]).includes(cursorReasoningRaw)
       ? (cursorReasoningRaw as CursorReasoningOption)
       : undefined;
-  const cursorFastMode = cursorCandidate?.fastMode === true;
-  const cursorThinkingFalse = cursorCandidate?.thinking === false;
+  const cursorFastMode =
+    cursorCandidate?.fastMode === true
+      ? true
+      : cursorCandidate?.fastMode === false
+        ? false
+        : undefined;
+  const cursorThinking =
+    cursorCandidate?.thinking === true
+      ? true
+      : cursorCandidate?.thinking === false
+        ? false
+        : undefined;
   const cursorContextWindow =
     typeof cursorCandidate?.contextWindow === "string" && cursorCandidate.contextWindow.length > 0
       ? cursorCandidate.contextWindow
@@ -637,8 +647,8 @@ function normalizeProviderModelOptions(
     cursorCandidate !== null
       ? {
           ...(cursorReasoning ? { reasoning: cursorReasoning } : {}),
-          ...(cursorFastMode ? { fastMode: true } : {}),
-          ...(cursorThinkingFalse ? { thinking: false } : {}),
+          ...(cursorFastMode !== undefined ? { fastMode: cursorFastMode } : {}),
+          ...(cursorThinking !== undefined ? { thinking: cursorThinking } : {}),
           ...(cursorContextWindow !== undefined ? { contextWindow: cursorContextWindow } : {}),
         }
       : undefined;

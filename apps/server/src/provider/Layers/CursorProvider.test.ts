@@ -302,6 +302,14 @@ describe("resolveCursorAcpConfigUpdates", () => {
       }),
     ).toEqual([{ configId: "thinking", value: false }]);
   });
+
+  it("maps explicit fastMode: false so the adapter can clear a prior fast selection", () => {
+    expect(
+      resolveCursorAcpConfigUpdates(parameterizedGpt54ConfigOptions, {
+        fastMode: false,
+      }),
+    ).toEqual([{ configId: "fast", value: "false" }]);
+  });
 });
 
 describe("resolveCursorAgentModel", () => {

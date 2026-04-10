@@ -7,7 +7,6 @@ import {
   type ServerProviderModel,
 } from "@t3tools/contracts";
 import {
-  getDefaultEffort,
   hasEffortLevel,
   normalizeModelSlug,
   resolveContextWindow,
@@ -79,20 +78,24 @@ export function normalizeCursorModelOptionsWithCapabilities(
   caps: ModelCapabilities,
   modelOptions: CursorModelOptions | null | undefined,
 ): CursorModelOptions | undefined {
-  const defaultEffort = getDefaultEffort(caps);
   const reasoning = trimOrNull(modelOptions?.reasoning);
   const reasoningValue =
-    reasoning && hasEffortLevel(caps, reasoning) && reasoning !== defaultEffort
+    reasoning && hasEffortLevel(caps, reasoning)
       ? (reasoning as CursorModelOptions["reasoning"])
       : undefined;
-  const fastMode = caps.supportsFastMode && modelOptions?.fastMode === true ? true : undefined;
+  const fastMode =
+    caps.supportsFastMode && typeof modelOptions?.fastMode === "boolean"
+      ? modelOptions.fastMode
+      : undefined;
   const thinking =
-    caps.supportsThinkingToggle && modelOptions?.thinking === false ? false : undefined;
+    caps.supportsThinkingToggle && typeof modelOptions?.thinking === "boolean"
+      ? modelOptions.thinking
+      : undefined;
   const contextWindow = resolveContextWindow(caps, modelOptions?.contextWindow);
   const nextOptions: CursorModelOptions = {
     ...(reasoningValue ? { reasoning: reasoningValue } : {}),
-    ...(fastMode ? { fastMode: true } : {}),
-    ...(thinking === false ? { thinking: false } : {}),
+    ...(fastMode !== undefined ? { fastMode } : {}),
+    ...(thinking !== undefined ? { thinking } : {}),
     ...(contextWindow ? { contextWindow } : {}),
   };
   return Object.keys(nextOptions).length > 0 ? nextOptions : undefined;
