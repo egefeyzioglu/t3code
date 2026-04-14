@@ -421,9 +421,15 @@ function getSafeDesktopSshTarget(rawTarget: unknown): DesktopSshEnvironmentTarge
     return null;
   }
 
+  const alias = target.alias.trim();
+  const hostname = target.hostname.trim();
+  if (alias.length === 0 || hostname.length === 0) {
+    return null;
+  }
+
   return {
-    alias: target.alias.trim(),
-    hostname: target.hostname.trim(),
+    alias,
+    hostname,
     username: target.username?.trim() || null,
     port: target.port ?? null,
   };
@@ -512,12 +518,11 @@ async function fetchLoopbackSshJson<T>(input: {
   }
 
   if (!response.ok) {
-    throw new Error(
-      await readRemoteFetchErrorMessage(
-        response,
-        `SSH forwarded request failed (${response.status}).`,
-      ),
+    const message = await readRemoteFetchErrorMessage(
+      response,
+      `SSH forwarded request failed (${response.status}).`,
     );
+    throw new Error(`[ssh_http:${response.status}] ${message}`);
   }
 
   return (await response.json()) as T;
