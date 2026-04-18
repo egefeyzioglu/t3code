@@ -46,6 +46,21 @@ const BENIGN_ERROR_LOG_SNIPPETS = [
   "state db missing rollout path for thread",
   "state db record_discrepancy: find_thread_path_by_id_str_in_subdir, falling_back",
 ];
+const RECOVERABLE_THREAD_RESUME_ERROR_SNIPPETS = [
+  "not found",
+  "missing thread",
+  "no such thread",
+  "unknown thread",
+  "does not exist",
+];
+
+function isRecoverableThreadResumeError(error: unknown): boolean {
+  const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
+  if (!message.includes("thread/resume")) {
+    return false;
+  }
+  return RECOVERABLE_THREAD_RESUME_ERROR_SNIPPETS.some((snippet) => message.includes(snippet));
+}
 
 export const CodexResumeCursorSchema = Schema.Struct({
   threadId: Schema.String,
@@ -1078,10 +1093,16 @@ export const makeCodexSessionRuntime = (
       yield* client.request("initialize", buildCodexInitializeParams());
       yield* client.notify("initialized", undefined);
 
-      const accountSnapshot = readCodexAccountSnapshotResponse(
-        yield* client.request("account/read", {}),
-      );
-      yield* Ref.set(accountRef, accountSnapshot);
+      const accountSnapshot = yield* Effect.matchEffect(client.request("account/read", {}), {
+        onSuccess: (response) =>
+          Effect.succeed(readCodexAccountSnapshotResponse(response)).pipe(
+            Effect.tap((snapshot) => Ref.set(accountRef, snapshot)),
+          ),
+        onFailure: (error) =>
+          Effect.logWarning("codex account/read failed, continuing with default account", {
+            cause: error instanceof Error ? error.message : String(error),
+          }).pipe(Effect.andThen(Ref.get(accountRef))),
+      });
 
       const requestedModel = resolveCodexModelForAccount(
         normalizeCodexModelSlug(options.model),
@@ -1089,26 +1110,34 @@ export const makeCodexSessionRuntime = (
       );
 
       const resumedThreadId = readResumeCursorThreadId(options.resumeCursor);
+      const threadStartParams = buildThreadStartParams({
+        cwd: options.cwd,
+        runtimeMode: options.runtimeMode,
+        model: requestedModel,
+        serviceTier: options.serviceTier,
+      });
+      const startFreshThread = client.request("thread/start", threadStartParams);
       const opened =
         resumedThreadId !== undefined
-          ? yield* client.request("thread/resume", {
-              threadId: resumedThreadId,
-              ...buildThreadStartParams({
-                cwd: options.cwd,
-                runtimeMode: options.runtimeMode,
-                model: requestedModel,
-                serviceTier: options.serviceTier,
-              }),
-            })
-          : yield* client.request(
-              "thread/start",
-              buildThreadStartParams({
-                cwd: options.cwd,
-                runtimeMode: options.runtimeMode,
-                model: requestedModel,
-                serviceTier: options.serviceTier,
-              }),
-            );
+          ? yield* client
+              .request("thread/resume", { threadId: resumedThreadId, ...threadStartParams })
+              .pipe(
+                Effect.catchIf(isRecoverableThreadResumeError, (error) =>
+                  emitSessionEvent(
+                    "session/threadResumeFallback",
+                    `Could not resume thread ${resumedThreadId}; starting a new thread instead.`,
+                  ).pipe(
+                    Effect.andThen(
+                      Effect.logWarning("codex thread/resume fell back to fresh start", {
+                        resumedThreadId,
+                        cause: error.message,
+                      }),
+                    ),
+                    Effect.andThen(startFreshThread),
+                  ),
+                ),
+              )
+          : yield* startFreshThread;
 
       const providerThreadId = opened.thread.id;
       const session = {
