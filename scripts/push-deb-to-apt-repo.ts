@@ -7,7 +7,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
-const VALID_CHANNELS = ["nightly", "staging", "stable"] as const;
+const VALID_CHANNELS = ["nightly", "stable"] as const;
 type AptChannel = (typeof VALID_CHANNELS)[number];
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -17,32 +17,37 @@ const releaseDir = join(repoRoot, "release");
  * Infer the apt channel from a .deb filename.
  *
  * The electron-builder artifact name encodes the version string, so we can
- * detect `-nightly.YYYYMMDD.N` and `-staging.YYYYMMDD.N` suffixes directly
+ * detect `-nightly.YYYYMMDD.N` suffixes directly
  * from the filename without needing to shell out to dpkg-deb.
  */
 function inferChannelFromDebFilename(filename: string): AptChannel {
   if (/-nightly\.\d{8}\.\d+/.test(filename)) return "nightly";
-  if (/-staging\.\d{8}\.\d+/.test(filename)) return "staging";
   return "stable";
 }
 
-function parseChannel(): AptChannel | undefined {
+function parseCli(): { channel: AptChannel | undefined; repoDir: string } {
   const { values } = parseArgs({
     options: {
       channel: { type: "string", short: "c" },
+      "repo-dir": { type: "string", short: "d" },
     },
     strict: false,
   });
 
-  const raw = values.channel as string | undefined;
-  if (!raw) return undefined;
-
-  if (!VALID_CHANNELS.includes(raw as AptChannel)) {
-    console.error(`Invalid channel '${raw}'. Must be one of: ${VALID_CHANNELS.join(", ")}`);
+  const rawChannel = values.channel as string | undefined;
+  if (rawChannel && !VALID_CHANNELS.includes(rawChannel as AptChannel)) {
+    console.error(`Invalid channel '${rawChannel}'. Must be one of: ${VALID_CHANNELS.join(", ")}`);
     process.exit(1);
   }
 
-  return raw as AptChannel;
+  const repoDir = (values["repo-dir"] as string | undefined)
+    ? resolve(values["repo-dir"] as string)
+    : join(homedir(), "apt-repo");
+
+  return {
+    channel: rawChannel as AptChannel | undefined,
+    repoDir,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -70,16 +75,16 @@ console.log(`Found .deb: ${debFile}`);
 
 // Resolve the target channel: explicit flag wins, otherwise infer from the
 // .deb filename version string.
-const explicitChannel = parseChannel();
-const channel: AptChannel = explicitChannel ?? inferChannelFromDebFilename(debFilename);
+const cli = parseCli();
+const channel: AptChannel = cli.channel ?? inferChannelFromDebFilename(debFilename);
 
-if (!explicitChannel) {
+if (!cli.channel) {
   console.log(`Auto-detected channel '${channel}' from filename.`);
 } else {
   console.log(`Using explicit channel '${channel}'.`);
 }
 
-const aptRepoDir = join(homedir(), "apt-repo");
+const aptRepoDir = cli.repoDir;
 const confDir = join(aptRepoDir, "conf");
 
 // Ensure apt repo directory structure exists
@@ -87,7 +92,7 @@ mkdirSync(confDir, { recursive: true });
 
 const distributionsPath = join(confDir, "distributions");
 
-// Build the full distributions file with all three codenames so reprepro
+// Build the full distributions file with all codenames so reprepro
 // always knows about every channel, regardless of which one we push to.
 function buildDistributionsContent(): string {
   const entries: { codename: AptChannel; label: string; description: string }[] = [
@@ -95,11 +100,6 @@ function buildDistributionsContent(): string {
       codename: "stable",
       label: "T3 Code Stable",
       description: "T3 Code stable apt repository",
-    },
-    {
-      codename: "staging",
-      label: "T3 Code Staging",
-      description: "T3 Code staging apt repository",
     },
     {
       codename: "nightly",
