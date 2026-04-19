@@ -215,7 +215,9 @@ interface StagePackageJson {
   readonly t3codeCommitHash: string;
   readonly private: true;
   readonly description: string;
-  readonly author: string;
+  readonly homepage: string;
+  readonly author: { readonly name: string; readonly email: string };
+  readonly maintainer: { readonly name: string; readonly email: string };
   readonly main: string;
   readonly build: Record<string, unknown>;
   readonly dependencies: Record<string, unknown>;
@@ -601,12 +603,22 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       executableName: "t3code",
       icon: "icon.png",
       category: "Development",
+      vendor: "Ping.gg <oss@ping.gg>",
       desktop: {
         entry: {
           StartupWMClass: "t3code",
         },
       },
     };
+
+    if (target === "deb") {
+      buildConfig.deb = {
+        depends: ["nodejs"],
+        packageCategory: "devel",
+        priority: "optional",
+        maintainer: "Ege Feyzioglu <ege@efeyzee.dev>",
+      };
+    }
   }
 
   if (platform === "win") {
@@ -783,8 +795,16 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     buildVersion: appVersion,
     t3codeCommitHash: commitHash,
     private: true,
-    description: "T3 Code desktop build",
-    author: "T3 Tools",
+    description: "A minimal web GUI for coding agents (currently Codex and Claude, more coming soon)",
+    homepage: "https://t3.codes",
+    author: {
+      name: "Ping.gg",
+      email: "oss@ping.gg",
+    },
+    maintainer: {
+      name: "Ege Feyzioglu",
+      email: "ege@efeyzee.dev"
+    },
     main: "apps/desktop/dist-electron/main.cjs",
     build: yield* createBuildConfig(
       options.platform,
