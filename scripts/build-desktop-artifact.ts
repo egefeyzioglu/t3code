@@ -75,6 +75,7 @@ interface BuildCliInput {
   readonly verbose: Option.Option<boolean>;
   readonly mockUpdates: Option.Option<boolean>;
   readonly mockUpdateServerPort: Option.Option<number>;
+  readonly pkgRevision: Option.Option<string>;
 }
 
 function detectHostBuildPlatform(hostPlatform: string): typeof BuildPlatform.Type | undefined {
@@ -206,6 +207,7 @@ interface ResolvedBuildOptions {
   readonly verbose: boolean;
   readonly mockUpdates: boolean;
   readonly mockUpdateServerPort: number | undefined;
+  readonly pkgRevision: string | undefined;
 }
 
 interface StagePackageJson {
@@ -325,6 +327,8 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
       ),
     ));
 
+  const pkgRevision = Option.getOrUndefined(input.pkgRevision);
+
   return {
     platform,
     target,
@@ -337,6 +341,7 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
     verbose,
     mockUpdates,
     mockUpdateServerPort,
+    pkgRevision,
   } satisfies ResolvedBuildOptions;
 });
 
@@ -735,8 +740,11 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       }),
   });
 
-  const appVersion = options.version ?? serverPackageJson.version;
-  const iconAssets = resolveDesktopBuildIconAssets(appVersion);
+  const upstreamVersion = options.version ?? serverPackageJson.version;
+  const appVersion = options.pkgRevision
+    ? `${upstreamVersion}-${options.pkgRevision}`
+    : upstreamVersion;
+  const iconAssets = resolveDesktopBuildIconAssets(upstreamVersion);
   const commitHash = yield* resolveGitCommitHash(repoRoot);
   const mkdir = options.keepStage ? fs.makeTempDirectory : fs.makeTempDirectoryScoped;
   const stageRoot = yield* mkdir({
@@ -917,6 +925,20 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     });
   }
 
+  // Generate .orig.tar.gz when a packaging revision is specified.
+  if (options.pkgRevision) {
+    const origTarName = `t3code_${upstreamVersion}.orig.tar.gz`;
+    const origTarPath = path.join(options.outputDir, origTarName);
+    yield* runCommand(
+      ChildProcess.make({
+        cwd: stageAppDir,
+        ...commandOutputOptions(options.verbose),
+      })`tar -czf ${origTarPath} --transform s,^\\.,t3code-${upstreamVersion}, .`,
+    );
+    copiedArtifacts.push(origTarPath);
+    yield* Effect.log(`[desktop-artifact] Generated ${origTarName}`);
+  }
+
   yield* Effect.log("[desktop-artifact] Done. Artifacts:").pipe(
     Effect.annotateLogs({ artifacts: copiedArtifacts }),
   );
@@ -972,6 +994,10 @@ const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
   mockUpdateServerPort: Flag.integer("mock-update-server-port").pipe(
     Flag.withSchema(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 }))),
     Flag.withDescription("Mock update server port (env: T3CODE_DESKTOP_MOCK_UPDATE_SERVER_PORT)."),
+    Flag.optional,
+  ),
+  pkgRevision: Flag.string("pkg-revision").pipe(
+    Flag.withDescription("Debian packaging revision suffix (e.g. '1' produces version 0.0.20-1)."),
     Flag.optional,
   ),
 }).pipe(
