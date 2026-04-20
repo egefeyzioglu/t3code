@@ -12,6 +12,7 @@ export const BRAND_ASSET_PATHS = {
   nightlyWindowsIconIco: "assets/nightly/blueprint-windows.ico",
 
   developmentDesktopIconPng: "assets/dev/blueprint-macos-1024.png",
+  developmentLinuxIconPng: "assets/dev/blueprint-universal-1024.png",
   developmentWindowsIconIco: "assets/dev/blueprint-windows.ico",
   developmentWebFaviconIco: "assets/dev/blueprint-web-favicon.ico",
   developmentWebFavicon16Png: "assets/dev/blueprint-web-favicon-16x16.png",

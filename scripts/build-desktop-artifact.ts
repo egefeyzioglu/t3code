@@ -421,7 +421,7 @@ function stageMacIcons(stageResourcesDir: string, sourcePng: string, verbose: bo
   });
 }
 
-function stageLinuxIcons(stageResourcesDir: string, sourcePng: string) {
+function stageLinuxIcons(stageResourcesDir: string, sourcePng: string, verbose: boolean) {
   return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -431,8 +431,21 @@ function stageLinuxIcons(stageResourcesDir: string, sourcePng: string) {
       });
     }
 
-    const iconPath = path.join(stageResourcesDir, "icon.png");
-    yield* fs.copyFile(sourcePng, iconPath);
+    // electron-builder picks up icons from a directory of PNGs named by size.
+    // Provide multiple sizes so the .deb installs them into hicolor and desktop
+    // environments can find an appropriate resolution for the launcher/search.
+    const iconsDir = path.join(stageResourcesDir, "icons");
+    yield* fs.makeDirectory(iconsDir, { recursive: true });
+
+    const sizes = [16, 32, 48, 64, 128, 256, 512, 1024] as const;
+    for (const size of sizes) {
+      const outPath = path.join(iconsDir, `${size}x${size}.png`);
+      yield* runCommand(
+        ChildProcess.make({
+          ...commandOutputOptions(verbose),
+        })`convert ${sourcePng} -resize ${size}x${size} ${outPath}`,
+      );
+    }
   });
 }
 
@@ -601,7 +614,7 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     buildConfig.linux = {
       target: [target],
       executableName: "t3code",
-      icon: "icon.png",
+      icon: "icons",
       category: "Development",
       vendor: "Ping.gg <oss@ping.gg>",
       desktop: {
@@ -650,7 +663,7 @@ const assertPlatformBuildResources = Effect.fn("assertPlatformBuildResources")(f
   }
 
   if (platform === "linux") {
-    yield* stageLinuxIcons(stageResourcesDir, iconAssets.linuxIconPng);
+    yield* stageLinuxIcons(stageResourcesDir, iconAssets.linuxIconPng, verbose);
     return;
   }
 
