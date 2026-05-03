@@ -49,10 +49,13 @@ function makeSecretStorage(available: boolean): DesktopSecretStorage {
 }
 
 const clientSettings: ClientSettings = {
+  autoOpenPlanSidebar: false,
   confirmThreadArchive: true,
   confirmThreadDelete: false,
+  diffIgnoreWhitespace: true,
   diffWordWrap: true,
   favorites: [],
+  providerModelPreferences: {},
   sidebarProjectGroupingMode: "repository_path",
   sidebarProjectGroupingOverrides: {
     "environment-1:/tmp/project-a": "separate",
