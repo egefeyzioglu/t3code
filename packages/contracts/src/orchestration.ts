@@ -213,6 +213,14 @@ export type OrchestrationProject = typeof OrchestrationProject.Type;
 export const OrchestrationMessageRole = Schema.Literals(["user", "assistant", "system"]);
 export type OrchestrationMessageRole = typeof OrchestrationMessageRole.Type;
 
+export const AssistantMessageResponseStats = Schema.Struct({
+  timeToFirstTokenMs: Schema.optional(NonNegativeInt),
+  averageTokensPerSecond: Schema.optional(Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))),
+  totalTokens: Schema.optional(NonNegativeInt),
+  inputTokens: Schema.optional(NonNegativeInt),
+});
+export type AssistantMessageResponseStats = typeof AssistantMessageResponseStats.Type;
+
 export const OrchestrationMessage = Schema.Struct({
   id: MessageId,
   role: OrchestrationMessageRole,
@@ -222,6 +230,8 @@ export const OrchestrationMessage = Schema.Struct({
   streaming: Schema.Boolean,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
+  responseStats: Schema.optional(AssistantMessageResponseStats),
+  statsForNerds: Schema.optional(Schema.String),
 });
 export type OrchestrationMessage = typeof OrchestrationMessage.Type;
 
@@ -713,6 +723,15 @@ const ThreadMessageAssistantCompleteCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+const ThreadMessageStatsUpdateCommand = Schema.Struct({
+  type: Schema.Literal("thread.message.stats.update"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  messageId: MessageId,
+  responseStats: AssistantMessageResponseStats,
+  updatedAt: IsoDateTime,
+});
+
 const ThreadProposedPlanUpsertCommand = Schema.Struct({
   type: Schema.Literal("thread.proposed-plan.upsert"),
   commandId: CommandId,
@@ -755,6 +774,7 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadSessionSetCommand,
   ThreadMessageAssistantDeltaCommand,
   ThreadMessageAssistantCompleteCommand,
+  ThreadMessageStatsUpdateCommand,
   ThreadProposedPlanUpsertCommand,
   ThreadTurnDiffCompleteCommand,
   ThreadActivityAppendCommand,
@@ -780,6 +800,7 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.runtime-mode-set",
   "thread.interaction-mode-set",
   "thread.message-sent",
+  "thread.message-stats-updated",
   "thread.turn-start-requested",
   "thread.turn-interrupt-requested",
   "thread.approval-response-requested",
@@ -887,6 +908,13 @@ export const ThreadMessageSentPayload = Schema.Struct({
   turnId: Schema.NullOr(TurnId),
   streaming: Schema.Boolean,
   createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+
+export const ThreadMessageStatsUpdatedPayload = Schema.Struct({
+  threadId: ThreadId,
+  messageId: MessageId,
+  responseStats: AssistantMessageResponseStats,
   updatedAt: IsoDateTime,
 });
 
@@ -1041,6 +1069,11 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.message-sent"),
     payload: ThreadMessageSentPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.message-stats-updated"),
+    payload: ThreadMessageStatsUpdatedPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,

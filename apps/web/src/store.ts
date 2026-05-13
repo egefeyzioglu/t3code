@@ -182,6 +182,7 @@ function mapMessage(environmentId: EnvironmentId, message: OrchestrationMessage)
     streaming: message.streaming,
     ...(message.streaming ? {} : { completedAt: message.updatedAt }),
     ...(attachments && attachments.length > 0 ? { attachments } : {}),
+    ...(message.responseStats !== undefined ? { responseStats: message.responseStats } : {}),
   };
 }
 
@@ -1395,6 +1396,9 @@ function applyEnvironmentOrchestrationEvent(
                     ...(message.attachments !== undefined
                       ? { attachments: message.attachments }
                       : {}),
+                    ...(message.responseStats !== undefined
+                      ? { responseStats: message.responseStats }
+                      : {}),
                   },
             )
           : [...thread.messages, message];
@@ -1446,6 +1450,20 @@ function applyEnvironmentOrchestrationEvent(
           updatedAt: event.occurredAt,
         };
       });
+
+    case "thread.message-stats-updated":
+      return updateThreadState(state, event.payload.threadId, (thread) => ({
+        ...thread,
+        messages: thread.messages.map((message) =>
+          message.id === event.payload.messageId
+            ? {
+                ...message,
+                responseStats: event.payload.responseStats,
+              }
+            : message,
+        ),
+        updatedAt: event.occurredAt,
+      }));
 
     case "thread.session-set":
       return updateThreadState(state, event.payload.threadId, (thread) => ({

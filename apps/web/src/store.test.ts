@@ -23,6 +23,7 @@ import {
   selectThreadExistsByRef,
   setThreadBranch,
   selectThreadsAcrossEnvironments,
+  syncServerThreadDetail,
   type AppState,
   type EnvironmentState,
 } from "./store";
@@ -724,6 +725,135 @@ describe("incremental orchestration updates", () => {
     expect(nextEnvironmentState?.messageByThreadId[thread2.id]).toBe(
       previousEnvironmentState?.messageByThreadId[thread2.id],
     );
+  });
+
+  it("preserves assistant response stats while appending streaming deltas", () => {
+    const thread = makeThread({
+      messages: [
+        {
+          id: MessageId.make("assistant-1"),
+          role: "assistant",
+          text: "hello",
+          turnId: TurnId.make("turn-1"),
+          createdAt: "2026-02-27T00:00:01.000Z",
+          streaming: true,
+          responseStats: {
+            timeToFirstTokenMs: 1200,
+          },
+        },
+      ],
+    });
+    const state = makeState(thread);
+
+    const next = applyOrchestrationEvent(
+      state,
+      makeEvent("thread.message-sent", {
+        threadId: thread.id,
+        messageId: MessageId.make("assistant-1"),
+        role: "assistant",
+        text: " world",
+        turnId: TurnId.make("turn-1"),
+        streaming: true,
+        createdAt: "2026-02-27T00:00:02.000Z",
+        updatedAt: "2026-02-27T00:00:02.000Z",
+      }),
+      localEnvironmentId,
+    );
+
+    expect(threadsOf(next)[0]?.messages[0]).toMatchObject({
+      text: "hello world",
+      responseStats: {
+        timeToFirstTokenMs: 1200,
+      },
+    });
+  });
+
+  it("updates assistant response stats from message stats events", () => {
+    const thread = makeThread({
+      messages: [
+        {
+          id: MessageId.make("assistant-1"),
+          role: "assistant",
+          text: "done",
+          turnId: TurnId.make("turn-1"),
+          createdAt: "2026-02-27T00:00:01.000Z",
+          streaming: false,
+        },
+      ],
+    });
+    const state = makeState(thread);
+
+    const next = applyOrchestrationEvent(
+      state,
+      makeEvent("thread.message-stats-updated", {
+        threadId: thread.id,
+        messageId: MessageId.make("assistant-1"),
+        responseStats: {
+          timeToFirstTokenMs: 750,
+          averageTokensPerSecond: 42.5,
+          totalTokens: 1280,
+          inputTokens: 1000,
+        },
+        updatedAt: "2026-02-27T00:00:04.000Z",
+      }),
+      localEnvironmentId,
+    );
+
+    expect(threadsOf(next)[0]?.messages[0]?.responseStats).toEqual({
+      timeToFirstTokenMs: 750,
+      averageTokensPerSecond: 42.5,
+      totalTokens: 1280,
+      inputTokens: 1000,
+    });
+  });
+
+  it("maps response stats from thread detail snapshots", () => {
+    const thread = makeThread();
+    const state = makeState(thread);
+
+    const next = syncServerThreadDetail(
+      state,
+      {
+        id: thread.id,
+        projectId: thread.projectId,
+        title: thread.title,
+        modelSelection: thread.modelSelection,
+        runtimeMode: thread.runtimeMode,
+        interactionMode: thread.interactionMode,
+        session: null,
+        messages: [
+          {
+            id: MessageId.make("assistant-1"),
+            role: "assistant",
+            text: "done",
+            turnId: TurnId.make("turn-1"),
+            streaming: false,
+            createdAt: "2026-02-27T00:00:01.000Z",
+            updatedAt: "2026-02-27T00:00:04.000Z",
+            responseStats: {
+              timeToFirstTokenMs: 500,
+              inputTokens: 123,
+            },
+          },
+        ],
+        activities: [],
+        proposedPlans: [],
+        checkpoints: [],
+        latestTurn: null,
+        branch: thread.branch,
+        worktreePath: thread.worktreePath,
+        archivedAt: thread.archivedAt,
+        deletedAt: null,
+        createdAt: thread.createdAt,
+        updatedAt: "2026-02-27T00:00:04.000Z",
+      },
+      localEnvironmentId,
+    );
+
+    expect(threadsOf(next)[0]?.messages[0]?.responseStats).toEqual({
+      timeToFirstTokenMs: 500,
+      inputTokens: 123,
+    });
   });
 
   it("applies replay batches in sequence and updates session state", () => {

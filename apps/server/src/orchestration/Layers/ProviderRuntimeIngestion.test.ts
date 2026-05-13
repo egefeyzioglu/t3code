@@ -2078,6 +2078,126 @@ describe("ProviderRuntimeIngestion", () => {
     expect(finalMessage?.streaming).toBe(false);
   });
 
+  it("persists assistant response stats from Codex deltas and token usage", async () => {
+    const harness = await createHarness({ serverSettings: { enableAssistantStreaming: true } });
+    const requestedAt = "2026-01-01T00:00:00.000Z";
+    const firstTokenAt = "2026-01-01T00:00:01.000Z";
+    const completedAt = "2026-01-01T00:00:03.000Z";
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-response-stats"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("message-response-stats"),
+          role: "user",
+          text: "measure this",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: requestedAt,
+      }),
+    );
+    await harness.drain();
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-response-stats"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: requestedAt,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-response-stats"),
+    });
+
+    await waitForThread(
+      harness.readModel,
+      (thread) => thread.session?.activeTurnId === "turn-response-stats",
+    );
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-message-delta-response-stats"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: firstTokenAt,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-response-stats"),
+      itemId: asItemId("item-response-stats"),
+      payload: {
+        streamKind: "assistant_text",
+        delta: "hello",
+      },
+    });
+
+    await waitForThread(harness.readModel, (thread) =>
+      thread.messages.some(
+        (message: ProviderRuntimeTestMessage) =>
+          message.id === "assistant:item-response-stats" &&
+          message.responseStats?.timeToFirstTokenMs === 1000,
+      ),
+    );
+
+    harness.emit({
+      type: "thread.token-usage.updated",
+      eventId: asEventId("evt-token-usage-response-stats"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:02.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-response-stats"),
+      payload: {
+        usage: {
+          usedTokens: 1075,
+          totalProcessedTokens: 10_200,
+          maxTokens: 128_000,
+          inputTokens: 1000,
+          cachedInputTokens: 0,
+          outputTokens: 50,
+          reasoningOutputTokens: 25,
+          lastUsedTokens: 1075,
+          lastInputTokens: 1000,
+          lastCachedInputTokens: 0,
+          lastOutputTokens: 50,
+          lastReasoningOutputTokens: 25,
+          compactsAutomatically: true,
+        },
+      },
+    });
+
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-message-completed-response-stats"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: completedAt,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-response-stats"),
+      itemId: asItemId("item-response-stats"),
+      payload: {
+        itemType: "assistant_message",
+        status: "completed",
+        detail: "hello",
+      },
+    });
+
+    const finalThread = await waitForThread(harness.readModel, (thread) =>
+      thread.messages.some(
+        (message: ProviderRuntimeTestMessage) =>
+          message.id === "assistant:item-response-stats" &&
+          !message.streaming &&
+          message.responseStats?.totalTokens === 1075,
+      ),
+    );
+    const finalMessage = finalThread.messages.find(
+      (entry: ProviderRuntimeTestMessage) => entry.id === "assistant:item-response-stats",
+    );
+    expect(finalMessage?.responseStats).toEqual({
+      timeToFirstTokenMs: 1000,
+      averageTokensPerSecond: 37.5,
+      totalTokens: 1075,
+      inputTokens: 1000,
+    });
+  });
+
   it("spills oversized buffered deltas and still finalizes full assistant text", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";

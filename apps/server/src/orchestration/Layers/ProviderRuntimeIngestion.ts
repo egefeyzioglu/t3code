@@ -1,5 +1,6 @@
 import {
   ApprovalRequestId,
+  type AssistantMessageResponseStats,
   type AssistantDeliveryMode,
   CommandId,
   MessageId,
@@ -23,6 +24,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
@@ -46,6 +48,14 @@ interface AssistantSegmentState {
   baseKey: string;
   nextSegmentIndex: number;
   activeMessageId: MessageId | null;
+}
+
+interface TurnResponseStatsState {
+  requestedAt?: string;
+  firstAssistantTokenAt?: string;
+  lastAssistantTokenAt?: string;
+  assistantMessageIds: Set<MessageId>;
+  latestUsage?: ThreadTokenUsageSnapshot;
 }
 
 const TURN_MESSAGE_IDS_BY_TURN_CACHE_CAPACITY = 10_000;
@@ -177,6 +187,59 @@ function normalizeProposedPlanMarkdown(planMarkdown: string | undefined): string
 
 function hasRenderableAssistantText(text: string | undefined): boolean {
   return (text?.trim().length ?? 0) > 0;
+}
+
+function nonNegativeElapsedMs(
+  startIso: string | undefined,
+  endIso: string | undefined,
+): number | undefined {
+  if (!startIso || !endIso) {
+    return undefined;
+  }
+  const start = Date.parse(startIso);
+  const end = Date.parse(endIso);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) {
+    return undefined;
+  }
+  return Math.round(end - start);
+}
+
+function responseStatsIsEmpty(stats: AssistantMessageResponseStats): boolean {
+  return (
+    stats.timeToFirstTokenMs === undefined &&
+    stats.averageTokensPerSecond === undefined &&
+    stats.totalTokens === undefined &&
+    stats.inputTokens === undefined
+  );
+}
+
+function buildFinalResponseStats(
+  state: TurnResponseStatsState | undefined,
+  completedAt: string,
+): AssistantMessageResponseStats {
+  if (!state) {
+    return {};
+  }
+
+  const usage = state.latestUsage;
+  const inputTokens = usage?.inputTokens ?? usage?.lastInputTokens;
+  const outputTokens = usage?.outputTokens ?? usage?.lastOutputTokens;
+  const reasoningOutputTokens = usage?.reasoningOutputTokens ?? usage?.lastReasoningOutputTokens;
+  const outputForRate = (outputTokens ?? 0) + (reasoningOutputTokens ?? 0);
+  const elapsedGenerationMs = nonNegativeElapsedMs(state.firstAssistantTokenAt, completedAt);
+  const timeToFirstTokenMs = nonNegativeElapsedMs(state.requestedAt, state.firstAssistantTokenAt);
+
+  return {
+    ...(timeToFirstTokenMs !== undefined ? { timeToFirstTokenMs } : {}),
+    ...(elapsedGenerationMs !== undefined && elapsedGenerationMs > 0 && outputForRate > 0
+      ? { averageTokensPerSecond: outputForRate / (elapsedGenerationMs / 1000) }
+      : {}),
+    ...(inputTokens !== undefined &&
+    (outputTokens !== undefined || reasoningOutputTokens !== undefined)
+      ? { totalTokens: inputTokens + (outputTokens ?? 0) + (reasoningOutputTokens ?? 0) }
+      : {}),
+    ...(inputTokens !== undefined ? { inputTokens } : {}),
+  };
 }
 
 function proposedPlanIdForTurn(threadId: ThreadId, turnId: TurnId): string {
@@ -639,6 +702,8 @@ const make = Effect.gen(function* () {
     timeToLive: BUFFERED_PROPOSED_PLAN_BY_ID_TTL,
     lookup: () => Effect.succeed({ text: "", createdAt: "" }),
   });
+  const pendingTurnRequestedAtByThread = yield* Ref.make(new Map<string, string>());
+  const turnResponseStatsByTurnKey = yield* Ref.make(new Map<string, TurnResponseStatsState>());
 
   const resolveThreadDetail = Effect.fn("resolveThreadDetail")(function* (threadId: ThreadId) {
     return yield* projectionSnapshotQuery
@@ -708,6 +773,122 @@ const make = Effect.gen(function* () {
 
   const clearAssistantSegmentStateForTurn = (threadId: ThreadId, turnId: TurnId) =>
     Cache.invalidate(assistantSegmentStateByTurnKey, providerTurnKey(threadId, turnId));
+
+  const getTurnResponseStats = (threadId: ThreadId, turnId: TurnId) =>
+    Ref.get(turnResponseStatsByTurnKey).pipe(
+      Effect.map((states) => states.get(providerTurnKey(threadId, turnId))),
+    );
+
+  const updateTurnResponseStats = (
+    threadId: ThreadId,
+    turnId: TurnId,
+    update: (state: TurnResponseStatsState | undefined) => TurnResponseStatsState,
+  ) =>
+    Ref.update(turnResponseStatsByTurnKey, (states) => {
+      const next = new Map(states);
+      next.set(
+        providerTurnKey(threadId, turnId),
+        update(next.get(providerTurnKey(threadId, turnId))),
+      );
+      return next;
+    });
+
+  const clearTurnResponseStats = (threadId: ThreadId, turnId: TurnId) =>
+    Ref.update(turnResponseStatsByTurnKey, (states) => {
+      const next = new Map(states);
+      next.delete(providerTurnKey(threadId, turnId));
+      return next;
+    });
+
+  const clearThreadResponseStats = (threadId: ThreadId) =>
+    Ref.update(turnResponseStatsByTurnKey, (states) => {
+      const next = new Map(states);
+      const prefix = `${threadId}:`;
+      for (const key of next.keys()) {
+        if (key.startsWith(prefix)) {
+          next.delete(key);
+        }
+      }
+      return next;
+    });
+
+  const bindPendingTurnRequestToTurn = (threadId: ThreadId, turnId: TurnId) =>
+    Ref.modify(pendingTurnRequestedAtByThread, (pending) => {
+      const requestedAt = pending.get(threadId);
+      const next = new Map(pending);
+      next.delete(threadId);
+      return [requestedAt, next] as const;
+    }).pipe(
+      Effect.flatMap((requestedAt) =>
+        requestedAt
+          ? updateTurnResponseStats(threadId, turnId, (state) => ({
+              requestedAt,
+              ...(state?.firstAssistantTokenAt
+                ? { firstAssistantTokenAt: state.firstAssistantTokenAt }
+                : {}),
+              ...(state?.lastAssistantTokenAt
+                ? { lastAssistantTokenAt: state.lastAssistantTokenAt }
+                : {}),
+              assistantMessageIds: new Set(state?.assistantMessageIds ?? []),
+              ...(state?.latestUsage ? { latestUsage: state.latestUsage } : {}),
+            }))
+          : Effect.void,
+      ),
+    );
+
+  const ensureTurnStatsForAssistantDelta = (input: {
+    threadId: ThreadId;
+    turnId: TurnId;
+    messageId: MessageId;
+    createdAt: string;
+  }) =>
+    Ref.modify(pendingTurnRequestedAtByThread, (pending) => {
+      const requestedAt = pending.get(input.threadId);
+      const next = new Map(pending);
+      if (requestedAt) {
+        next.delete(input.threadId);
+      }
+      return [requestedAt, next] as const;
+    }).pipe(
+      Effect.flatMap((requestedAt) =>
+        Ref.modify(turnResponseStatsByTurnKey, (states) => {
+          const key = providerTurnKey(input.threadId, input.turnId);
+          const current = states.get(key);
+          const assistantMessageIds = new Set(current?.assistantMessageIds ?? []);
+          assistantMessageIds.add(input.messageId);
+          const nextRequestedAt = current?.requestedAt ?? requestedAt;
+          const nextState: TurnResponseStatsState = {
+            ...(nextRequestedAt ? { requestedAt: nextRequestedAt } : {}),
+            firstAssistantTokenAt: current?.firstAssistantTokenAt ?? input.createdAt,
+            lastAssistantTokenAt: input.createdAt,
+            assistantMessageIds,
+            ...(current?.latestUsage ? { latestUsage: current.latestUsage } : {}),
+          };
+          const next = new Map(states);
+          next.set(key, nextState);
+          return [nextState, next] as const;
+        }),
+      ),
+    );
+
+  const dispatchMessageResponseStats = (input: {
+    event: ProviderRuntimeEvent;
+    threadId: ThreadId;
+    messageId: MessageId;
+    responseStats: AssistantMessageResponseStats;
+    updatedAt: string;
+    commandTag: string;
+  }) =>
+    responseStatsIsEmpty(input.responseStats)
+      ? Effect.void
+      : orchestrationEngine.dispatch({
+          type: "thread.message.stats.update",
+          commandId: providerCommandId(input.event, input.commandTag),
+          threadId: input.threadId,
+          messageId: input.messageId,
+          responseStats: input.responseStats,
+          updatedAt: input.updatedAt,
+        });
 
   const getActiveAssistantMessageIdForTurn = (threadId: ThreadId, turnId: TurnId) =>
     getAssistantSegmentStateForTurn(threadId, turnId).pipe(
@@ -933,6 +1114,17 @@ const make = Effect.gen(function* () {
           ...(input.turnId ? { turnId: input.turnId } : {}),
           createdAt: input.createdAt,
         });
+        if (input.turnId) {
+          const statsState = yield* getTurnResponseStats(input.threadId, input.turnId);
+          yield* dispatchMessageResponseStats({
+            event: input.event,
+            threadId: input.threadId,
+            messageId: input.messageId,
+            responseStats: buildFinalResponseStats(statsState, input.createdAt),
+            updatedAt: input.createdAt,
+            commandTag: `${input.commandTag}-response-stats`,
+          });
+        }
       }
       yield* clearAssistantMessageState(input.messageId);
     });
@@ -1231,6 +1423,14 @@ const make = Effect.gen(function* () {
           : null;
 
       if (
+        event.type === "turn.started" &&
+        eventTurnId !== undefined &&
+        shouldApplyThreadLifecycle
+      ) {
+        yield* bindPendingTurnRequestToTurn(thread.id, eventTurnId);
+      }
+
+      if (
         event.type === "session.started" ||
         event.type === "session.state.changed" ||
         event.type === "session.exited" ||
@@ -1332,6 +1532,14 @@ const make = Effect.gen(function* () {
         if (turnId) {
           yield* rememberAssistantMessageId(thread.id, turnId, assistantMessageId);
         }
+        const statsState = turnId
+          ? yield* ensureTurnStatsForAssistantDelta({
+              threadId: thread.id,
+              turnId,
+              messageId: assistantMessageId,
+              createdAt: now,
+            })
+          : undefined;
 
         const assistantDeliveryMode: AssistantDeliveryMode = yield* Effect.map(
           serverSettingsService.getSettings,
@@ -1361,6 +1569,31 @@ const make = Effect.gen(function* () {
             createdAt: now,
           });
         }
+        if (turnId && statsState?.requestedAt && statsState.firstAssistantTokenAt === now) {
+          const timeToFirstTokenMs = nonNegativeElapsedMs(statsState.requestedAt, now);
+          yield* dispatchMessageResponseStats({
+            event,
+            threadId: thread.id,
+            messageId: assistantMessageId,
+            responseStats: timeToFirstTokenMs !== undefined ? { timeToFirstTokenMs } : {},
+            updatedAt: now,
+            commandTag: "assistant-response-stats-ttft",
+          });
+        }
+      }
+
+      if (event.type === "thread.token-usage.updated" && eventTurnId !== undefined) {
+        yield* updateTurnResponseStats(thread.id, eventTurnId, (state) => ({
+          ...(state?.requestedAt ? { requestedAt: state.requestedAt } : {}),
+          ...(state?.firstAssistantTokenAt
+            ? { firstAssistantTokenAt: state.firstAssistantTokenAt }
+            : {}),
+          ...(state?.lastAssistantTokenAt
+            ? { lastAssistantTokenAt: state.lastAssistantTokenAt }
+            : {}),
+          assistantMessageIds: new Set(state?.assistantMessageIds ?? []),
+          latestUsage: event.payload.usage,
+        }));
       }
 
       const pauseForUserTurnId =
@@ -1502,11 +1735,23 @@ const make = Effect.gen(function* () {
         const proposedPlans = detailedThread?.proposedPlans ?? [];
         const turnId = toTurnId(event.turnId);
         if (turnId) {
-          const assistantMessageIds = yield* getAssistantMessageIdsForTurn(thread.id, turnId);
+          const trackedAssistantMessageIds = yield* getAssistantMessageIdsForTurn(
+            thread.id,
+            turnId,
+          );
+          const statsState = yield* getTurnResponseStats(thread.id, turnId);
+          const assistantMessageIds = new Set([
+            ...trackedAssistantMessageIds,
+            ...(statsState?.assistantMessageIds ?? []),
+          ]);
           yield* Effect.forEach(
             assistantMessageIds,
-            (assistantMessageId) =>
-              finalizeAssistantMessage({
+            (assistantMessageId) => {
+              const existingMessage = findMessageById(messages, assistantMessageId);
+              if (existingMessage && !existingMessage.streaming) {
+                return Effect.void;
+              }
+              return finalizeAssistantMessage({
                 event,
                 threadId: thread.id,
                 messageId: assistantMessageId,
@@ -1514,12 +1759,14 @@ const make = Effect.gen(function* () {
                 createdAt: now,
                 commandTag: "assistant-complete-finalize",
                 finalDeltaCommandTag: "assistant-delta-finalize-fallback",
-                hasProjectedMessage: findMessageById(messages, assistantMessageId) !== undefined,
-              }),
+                hasProjectedMessage: existingMessage !== undefined,
+              });
+            },
             { concurrency: 1 },
           ).pipe(Effect.asVoid);
           yield* clearAssistantMessageIdsForTurn(thread.id, turnId);
           yield* clearAssistantSegmentStateForTurn(thread.id, turnId);
+          yield* clearTurnResponseStats(thread.id, turnId);
 
           yield* finalizeBufferedProposedPlan({
             event,
@@ -1534,6 +1781,7 @@ const make = Effect.gen(function* () {
 
       if (event.type === "session.exited") {
         yield* clearTurnStateForSession(thread.id);
+        yield* clearThreadResponseStats(thread.id);
       }
 
       if (event.type === "runtime.error") {
@@ -1562,6 +1810,9 @@ const make = Effect.gen(function* () {
             },
             createdAt: now,
           });
+          if (eventTurnId !== undefined) {
+            yield* clearTurnResponseStats(thread.id, eventTurnId);
+          }
         }
       }
 
@@ -1623,7 +1874,12 @@ const make = Effect.gen(function* () {
       ).pipe(Effect.asVoid);
     });
 
-  const processDomainEvent = (_event: TurnStartRequestedDomainEvent) => Effect.void;
+  const processDomainEvent = (event: TurnStartRequestedDomainEvent) =>
+    Ref.update(pendingTurnRequestedAtByThread, (pending) => {
+      const next = new Map(pending);
+      next.set(event.payload.threadId, event.payload.createdAt);
+      return next;
+    });
 
   const processInput = (input: RuntimeIngestionInput) =>
     input.source === "runtime" ? processRuntimeEvent(input.event) : processDomainEvent(input.event);

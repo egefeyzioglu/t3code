@@ -12,6 +12,7 @@ import {
   OrchestrationGetFullThreadDiffInput,
   OrchestrationGetTurnDiffInput,
   OrchestrationLatestTurn,
+  OrchestrationMessage,
   ProjectCreatedPayload,
   ProjectMetaUpdatedPayload,
   OrchestrationProposedPlan,
@@ -38,6 +39,7 @@ const decodeThreadTurnStartRequestedPayload = Schema.decodeUnknownEffect(
 const decodeOrchestrationLatestTurn = Schema.decodeUnknownEffect(OrchestrationLatestTurn);
 const decodeOrchestrationProposedPlan = Schema.decodeUnknownEffect(OrchestrationProposedPlan);
 const decodeOrchestrationSession = Schema.decodeUnknownEffect(OrchestrationSession);
+const decodeOrchestrationMessage = Schema.decodeUnknownEffect(OrchestrationMessage);
 const encodeThreadCreatedPayload = Schema.encodeEffect(ThreadCreatedPayload);
 
 function getOptionValue(
@@ -50,6 +52,96 @@ const decodeThreadCreatedPayload = Schema.decodeUnknownEffect(ThreadCreatedPaylo
 const decodeOrchestrationCommand = Schema.decodeUnknownEffect(OrchestrationCommand);
 const decodeOrchestrationEvent = Schema.decodeUnknownEffect(OrchestrationEvent);
 const decodeThreadMetaUpdatedPayload = Schema.decodeUnknownEffect(ThreadMetaUpdatedPayload);
+
+it.effect("decodes assistant message response stats", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationMessage({
+      id: "message-1",
+      role: "assistant",
+      text: "done",
+      turnId: "turn-1",
+      streaming: false,
+      createdAt: "2026-01-01T00:00:01.000Z",
+      updatedAt: "2026-01-01T00:00:02.000Z",
+      responseStats: {
+        timeToFirstTokenMs: 250,
+        averageTokensPerSecond: 42.5,
+        totalTokens: 120,
+        inputTokens: 80,
+      },
+    });
+
+    assert.deepStrictEqual(parsed.responseStats, {
+      timeToFirstTokenMs: 250,
+      averageTokensPerSecond: 42.5,
+      totalTokens: 120,
+      inputTokens: 80,
+    });
+  }),
+);
+
+it.effect("decodes thread message stats events and rejects invalid stats", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationEvent({
+      sequence: 1,
+      eventId: "event-message-stats-1",
+      aggregateKind: "thread",
+      aggregateId: "thread-1",
+      type: "thread.message-stats-updated",
+      occurredAt: "2026-01-01T00:00:02.000Z",
+      commandId: "cmd-message-stats-1",
+      causationEventId: null,
+      correlationId: "cmd-message-stats-1",
+      metadata: {},
+      payload: {
+        threadId: "thread-1",
+        messageId: "message-1",
+        updatedAt: "2026-01-01T00:00:02.000Z",
+        responseStats: {
+          timeToFirstTokenMs: 250,
+          averageTokensPerSecond: 42.5,
+          totalTokens: 120,
+          inputTokens: 80,
+        },
+      },
+    });
+
+    assert.strictEqual(parsed.type, "thread.message-stats-updated");
+    assert.strictEqual(parsed.payload.responseStats.inputTokens, 80);
+
+    const negativeTokenResult = yield* Effect.exit(
+      decodeOrchestrationMessage({
+        id: "message-2",
+        role: "assistant",
+        text: "done",
+        turnId: "turn-1",
+        streaming: false,
+        createdAt: "2026-01-01T00:00:01.000Z",
+        updatedAt: "2026-01-01T00:00:02.000Z",
+        responseStats: {
+          inputTokens: -1,
+        },
+      }),
+    );
+    assert.strictEqual(negativeTokenResult._tag, "Failure");
+
+    const negativeRateResult = yield* Effect.exit(
+      decodeOrchestrationMessage({
+        id: "message-3",
+        role: "assistant",
+        text: "done",
+        turnId: "turn-1",
+        streaming: false,
+        createdAt: "2026-01-01T00:00:01.000Z",
+        updatedAt: "2026-01-01T00:00:02.000Z",
+        responseStats: {
+          averageTokensPerSecond: -0.1,
+        },
+      }),
+    );
+    assert.strictEqual(negativeRateResult._tag, "Failure");
+  }),
+);
 
 it.effect("parses turn diff input when fromTurnCount <= toTurnCount", () =>
   Effect.gen(function* () {

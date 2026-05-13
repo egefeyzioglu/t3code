@@ -15,14 +15,41 @@ import {
   DeleteProjectionThreadMessagesInput,
   ListProjectionThreadMessagesInput,
   ProjectionThreadMessage,
+  UpdateProjectionThreadMessageResponseStatsInput,
 } from "../Services/ProjectionThreadMessages.ts";
 
 const ProjectionThreadMessageDbRowSchema = ProjectionThreadMessage.mapFields(
   Struct.assign({
     isStreaming: Schema.Number,
     attachments: Schema.NullOr(Schema.fromJsonString(Schema.Array(ChatAttachment))),
+    timeToFirstTokenMs: Schema.NullOr(Schema.Number),
+    averageTokensPerSecond: Schema.NullOr(Schema.Number),
+    totalTokens: Schema.NullOr(Schema.Number),
+    inputTokens: Schema.NullOr(Schema.Number),
   }),
 );
+
+function responseStatsFromRow(
+  row: Schema.Schema.Type<typeof ProjectionThreadMessageDbRowSchema>,
+): ProjectionThreadMessage["responseStats"] | undefined {
+  if (
+    row.timeToFirstTokenMs === null &&
+    row.averageTokensPerSecond === null &&
+    row.totalTokens === null &&
+    row.inputTokens === null
+  ) {
+    return undefined;
+  }
+
+  return {
+    ...(row.timeToFirstTokenMs !== null ? { timeToFirstTokenMs: row.timeToFirstTokenMs } : {}),
+    ...(row.averageTokensPerSecond !== null
+      ? { averageTokensPerSecond: row.averageTokensPerSecond }
+      : {}),
+    ...(row.totalTokens !== null ? { totalTokens: row.totalTokens } : {}),
+    ...(row.inputTokens !== null ? { inputTokens: row.inputTokens } : {}),
+  };
+}
 
 function toProjectionThreadMessage(
   row: Schema.Schema.Type<typeof ProjectionThreadMessageDbRowSchema>,
@@ -37,6 +64,9 @@ function toProjectionThreadMessage(
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     ...(row.attachments !== null ? { attachments: row.attachments } : {}),
+    ...(responseStatsFromRow(row) !== undefined
+      ? { responseStats: responseStatsFromRow(row) }
+      : {}),
   };
 }
 
@@ -48,6 +78,7 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
     execute: (row) => {
       const nextAttachmentsJson =
         row.attachments !== undefined ? JSON.stringify(row.attachments) : null;
+      const hasResponseStats = row.responseStats !== undefined;
       return sql`
         INSERT INTO projection_thread_messages (
           message_id,
@@ -56,6 +87,10 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
           role,
           text,
           attachments_json,
+          time_to_first_token_ms,
+          average_tokens_per_second,
+          total_tokens,
+          input_tokens,
           is_streaming,
           created_at,
           updated_at
@@ -74,6 +109,10 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
               WHERE message_id = ${row.messageId}
             )
           ),
+          ${hasResponseStats ? (row.responseStats?.timeToFirstTokenMs ?? null) : null},
+          ${hasResponseStats ? (row.responseStats?.averageTokensPerSecond ?? null) : null},
+          ${hasResponseStats ? (row.responseStats?.totalTokens ?? null) : null},
+          ${hasResponseStats ? (row.responseStats?.inputTokens ?? null) : null},
           ${row.isStreaming ? 1 : 0},
           ${row.createdAt},
           ${row.updatedAt}
@@ -88,6 +127,22 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
             excluded.attachments_json,
             projection_thread_messages.attachments_json
           ),
+          time_to_first_token_ms = CASE
+            WHEN ${hasResponseStats ? 1 : 0} = 1 THEN excluded.time_to_first_token_ms
+            ELSE projection_thread_messages.time_to_first_token_ms
+          END,
+          average_tokens_per_second = CASE
+            WHEN ${hasResponseStats ? 1 : 0} = 1 THEN excluded.average_tokens_per_second
+            ELSE projection_thread_messages.average_tokens_per_second
+          END,
+          total_tokens = CASE
+            WHEN ${hasResponseStats ? 1 : 0} = 1 THEN excluded.total_tokens
+            ELSE projection_thread_messages.total_tokens
+          END,
+          input_tokens = CASE
+            WHEN ${hasResponseStats ? 1 : 0} = 1 THEN excluded.input_tokens
+            ELSE projection_thread_messages.input_tokens
+          END,
           is_streaming = excluded.is_streaming,
           created_at = excluded.created_at,
           updated_at = excluded.updated_at
@@ -107,6 +162,10 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
           role,
           text,
           attachments_json AS "attachments",
+          time_to_first_token_ms AS "timeToFirstTokenMs",
+          average_tokens_per_second AS "averageTokensPerSecond",
+          total_tokens AS "totalTokens",
+          input_tokens AS "inputTokens",
           is_streaming AS "isStreaming",
           created_at AS "createdAt",
           updated_at AS "updatedAt"
@@ -128,6 +187,10 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
           role,
           text,
           attachments_json AS "attachments",
+          time_to_first_token_ms AS "timeToFirstTokenMs",
+          average_tokens_per_second AS "averageTokensPerSecond",
+          total_tokens AS "totalTokens",
+          input_tokens AS "inputTokens",
           is_streaming AS "isStreaming",
           created_at AS "createdAt",
           updated_at AS "updatedAt"
@@ -143,6 +206,21 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
       sql`
         DELETE FROM projection_thread_messages
         WHERE thread_id = ${threadId}
+      `,
+  });
+
+  const updateProjectionThreadMessageResponseStatsRow = SqlSchema.void({
+    Request: UpdateProjectionThreadMessageResponseStatsInput,
+    execute: ({ messageId, responseStats, updatedAt }) =>
+      sql`
+        UPDATE projection_thread_messages
+        SET
+          time_to_first_token_ms = ${responseStats.timeToFirstTokenMs ?? null},
+          average_tokens_per_second = ${responseStats.averageTokensPerSecond ?? null},
+          total_tokens = ${responseStats.totalTokens ?? null},
+          input_tokens = ${responseStats.inputTokens ?? null},
+          updated_at = ${updatedAt}
+        WHERE message_id = ${messageId}
       `,
   });
 
@@ -174,11 +252,21 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
       ),
     );
 
+  const updateResponseStats: ProjectionThreadMessageRepositoryShape["updateResponseStats"] = (
+    input,
+  ) =>
+    updateProjectionThreadMessageResponseStatsRow(input).pipe(
+      Effect.mapError(
+        toPersistenceSqlError("ProjectionThreadMessageRepository.updateResponseStats:query"),
+      ),
+    );
+
   return {
     upsert,
     getByMessageId,
     listByThreadId,
     deleteByThreadId,
+    updateResponseStats,
   } satisfies ProjectionThreadMessageRepositoryShape;
 });
 

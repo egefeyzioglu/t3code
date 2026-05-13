@@ -121,6 +121,29 @@ function buildUserTimelineEntry(text: string) {
   };
 }
 
+function buildAssistantTimelineEntry() {
+  return {
+    id: "entry-assistant-1",
+    kind: "message" as const,
+    createdAt: MESSAGE_CREATED_AT,
+    durationStart: "2026-03-17T19:12:27.000Z",
+    message: {
+      id: MessageId.make("assistant-1"),
+      role: "assistant" as const,
+      text: "Done.",
+      createdAt: MESSAGE_CREATED_AT,
+      completedAt: "2026-03-17T19:12:30.000Z",
+      streaming: false,
+      responseStats: {
+        timeToFirstTokenMs: 1200,
+        averageTokensPerSecond: 44.75,
+        totalTokens: 8200,
+        inputTokens: 3100,
+      },
+    },
+  };
+}
+
 describe("MessagesTimeline", () => {
   it("renders collapse controls for long user messages", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
@@ -148,6 +171,18 @@ describe("MessagesTimeline", () => {
 
     expect(markup).not.toContain("Show full message");
     expect(markup).toContain('data-user-message-collapsible="false"');
+  });
+
+  it("renders assistant response stats in completed message metadata", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} timelineEntries={[buildAssistantTimelineEntry()]} />,
+    );
+
+    expect(markup).toContain("TTFT 1.2s");
+    expect(markup).toContain("44.8 tok/s");
+    expect(markup).toContain("8.2k tokens");
+    expect(markup).toContain("3.1k input");
   });
 
   it("renders inline terminal labels with the composer chip UI", async () => {

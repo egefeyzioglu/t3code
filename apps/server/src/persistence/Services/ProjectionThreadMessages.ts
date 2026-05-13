@@ -7,6 +7,7 @@
  * @module ProjectionThreadMessageRepository
  */
 import {
+  AssistantMessageResponseStats,
   ChatAttachment,
   MessageId,
   OrchestrationMessageRole,
@@ -28,6 +29,7 @@ export const ProjectionThreadMessage = Schema.Struct({
   role: OrchestrationMessageRole,
   text: Schema.String,
   attachments: Schema.optional(Schema.Array(ChatAttachment)),
+  responseStats: Schema.optional(AssistantMessageResponseStats),
   isStreaming: Schema.Boolean,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -48,6 +50,14 @@ export const DeleteProjectionThreadMessagesInput = Schema.Struct({
   threadId: ThreadId,
 });
 export type DeleteProjectionThreadMessagesInput = typeof DeleteProjectionThreadMessagesInput.Type;
+
+export const UpdateProjectionThreadMessageResponseStatsInput = Schema.Struct({
+  messageId: MessageId,
+  responseStats: AssistantMessageResponseStats,
+  updatedAt: IsoDateTime,
+});
+export type UpdateProjectionThreadMessageResponseStatsInput =
+  typeof UpdateProjectionThreadMessageResponseStatsInput.Type;
 
 /**
  * ProjectionThreadMessageRepositoryShape - Service API for projected thread messages.
@@ -83,6 +93,13 @@ export interface ProjectionThreadMessageRepositoryShape {
    */
   readonly deleteByThreadId: (
     input: DeleteProjectionThreadMessagesInput,
+  ) => Effect.Effect<void, ProjectionRepositoryError>;
+
+  /**
+   * Update response stats for an existing projected thread message.
+   */
+  readonly updateResponseStats: (
+    input: UpdateProjectionThreadMessageResponseStatsInput,
   ) => Effect.Effect<void, ProjectionRepositoryError>;
 }
 

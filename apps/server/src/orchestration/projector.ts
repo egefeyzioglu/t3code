@@ -403,6 +403,9 @@ export function projectEvent(
                     ...(message.attachments !== undefined
                       ? { attachments: message.attachments }
                       : {}),
+                    ...(message.responseStats !== undefined
+                      ? { responseStats: message.responseStats }
+                      : {}),
                   }
                 : entry,
             )
@@ -417,6 +420,32 @@ export function projectEvent(
           }),
         };
       });
+
+    case "thread.message-stats-updated": {
+      const thread = nextBase.threads.find((entry) => entry.id === event.payload.threadId);
+      if (!thread) {
+        return Effect.succeed(nextBase);
+      }
+      const messageIndex = thread.messages.findIndex(
+        (message) => message.id === event.payload.messageId,
+      );
+      if (messageIndex < 0) {
+        return Effect.succeed(nextBase);
+      }
+      const messages = [...thread.messages];
+      messages[messageIndex] = {
+        ...messages[messageIndex]!,
+        responseStats: event.payload.responseStats,
+        updatedAt: event.payload.updatedAt,
+      };
+      return Effect.succeed({
+        ...nextBase,
+        threads: updateThread(nextBase.threads, event.payload.threadId, {
+          messages,
+          updatedAt: event.occurredAt,
+        }),
+      });
+    }
 
     case "thread.session-set":
       return Effect.gen(function* () {

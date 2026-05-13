@@ -67,8 +67,34 @@ const ProjectionThreadMessageDbRowSchema = ProjectionThreadMessage.mapFields(
   Struct.assign({
     isStreaming: Schema.Number,
     attachments: Schema.NullOr(Schema.fromJsonString(Schema.Array(ChatAttachment))),
+    timeToFirstTokenMs: Schema.NullOr(Schema.Number),
+    averageTokensPerSecond: Schema.NullOr(Schema.Number),
+    totalTokens: Schema.NullOr(Schema.Number),
+    inputTokens: Schema.NullOr(Schema.Number),
   }),
 );
+
+function responseStatsFromMessageRow(
+  row: Schema.Schema.Type<typeof ProjectionThreadMessageDbRowSchema>,
+): ProjectionThreadMessage["responseStats"] | undefined {
+  if (
+    row.timeToFirstTokenMs === null &&
+    row.averageTokensPerSecond === null &&
+    row.totalTokens === null &&
+    row.inputTokens === null
+  ) {
+    return undefined;
+  }
+
+  return {
+    ...(row.timeToFirstTokenMs !== null ? { timeToFirstTokenMs: row.timeToFirstTokenMs } : {}),
+    ...(row.averageTokensPerSecond !== null
+      ? { averageTokensPerSecond: row.averageTokensPerSecond }
+      : {}),
+    ...(row.totalTokens !== null ? { totalTokens: row.totalTokens } : {}),
+    ...(row.inputTokens !== null ? { inputTokens: row.inputTokens } : {}),
+  };
+}
 const ProjectionThreadProposedPlanDbRowSchema = ProjectionThreadProposedPlan;
 const ProjectionThreadDbRowSchema = ProjectionThread.mapFields(
   Struct.assign({
@@ -399,6 +425,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           role,
           text,
           attachments_json AS "attachments",
+          time_to_first_token_ms AS "timeToFirstTokenMs",
+          average_tokens_per_second AS "averageTokensPerSecond",
+          total_tokens AS "totalTokens",
+          input_tokens AS "inputTokens",
           is_streaming AS "isStreaming",
           created_at AS "createdAt",
           updated_at AS "updatedAt"
@@ -762,6 +792,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           role,
           text,
           attachments_json AS "attachments",
+          time_to_first_token_ms AS "timeToFirstTokenMs",
+          average_tokens_per_second AS "averageTokensPerSecond",
+          total_tokens AS "totalTokens",
+          input_tokens AS "inputTokens",
           is_streaming AS "isStreaming",
           created_at AS "createdAt",
           updated_at AS "updatedAt"
@@ -1001,6 +1035,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   role: row.role,
                   text: row.text,
                   ...(row.attachments !== null ? { attachments: row.attachments } : {}),
+                  ...(responseStatsFromMessageRow(row) !== undefined
+                    ? { responseStats: responseStatsFromMessageRow(row) }
+                    : {}),
                   turnId: row.turnId,
                   streaming: row.isStreaming === 1,
                   createdAt: row.createdAt,
@@ -1910,10 +1947,13 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             createdAt: row.createdAt,
             updatedAt: row.updatedAt,
           };
-          if (row.attachments !== null) {
-            return Object.assign(message, { attachments: row.attachments });
-          }
-          return message;
+          return Object.assign(
+            message,
+            row.attachments !== null ? { attachments: row.attachments } : {},
+            responseStatsFromMessageRow(row) !== undefined
+              ? { responseStats: responseStatsFromMessageRow(row) }
+              : {},
+          );
         }),
         proposedPlans: proposedPlanRows.map(mapProposedPlanRow),
         activities: activityRows.map((row) => {

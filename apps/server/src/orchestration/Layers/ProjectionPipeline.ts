@@ -814,8 +814,20 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             role: event.payload.role,
             text: nextText,
             ...(nextAttachments !== undefined ? { attachments: [...nextAttachments] } : {}),
+            ...(previousMessage?.responseStats !== undefined
+              ? { responseStats: previousMessage.responseStats }
+              : {}),
             isStreaming: event.payload.streaming,
             createdAt: previousMessage?.createdAt ?? event.payload.createdAt,
+            updatedAt: event.payload.updatedAt,
+          });
+          return;
+        }
+
+        case "thread.message-stats-updated": {
+          yield* projectionThreadMessageRepository.updateResponseStats({
+            messageId: event.payload.messageId,
+            responseStats: event.payload.responseStats,
             updatedAt: event.payload.updatedAt,
           });
           return;

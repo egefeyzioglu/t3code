@@ -1368,6 +1368,112 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
   );
 
   it.effect(
+    "applies message response stats updates and preserves them during streaming upserts",
+    () =>
+      Effect.gen(function* () {
+        const projectionPipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+        const now = "2026-01-01T00:00:00.000Z";
+
+        yield* eventStore.append({
+          type: "thread.message-sent",
+          eventId: EventId.make("evt-stats-1"),
+          aggregateKind: "thread",
+          aggregateId: ThreadId.make("thread-stats"),
+          occurredAt: now,
+          commandId: CommandId.make("cmd-stats-1"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-stats-1"),
+          metadata: {},
+          payload: {
+            threadId: ThreadId.make("thread-stats"),
+            messageId: MessageId.make("assistant-stats"),
+            role: "assistant",
+            text: "hello",
+            turnId: TurnId.make("turn-stats"),
+            streaming: true,
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+
+        yield* eventStore.append({
+          type: "thread.message-stats-updated",
+          eventId: EventId.make("evt-stats-2"),
+          aggregateKind: "thread",
+          aggregateId: ThreadId.make("thread-stats"),
+          occurredAt: now,
+          commandId: CommandId.make("cmd-stats-2"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-stats-2"),
+          metadata: {},
+          payload: {
+            threadId: ThreadId.make("thread-stats"),
+            messageId: MessageId.make("assistant-stats"),
+            responseStats: {
+              timeToFirstTokenMs: 1200,
+              averageTokensPerSecond: 25,
+              totalTokens: 150,
+              inputTokens: 100,
+            },
+            updatedAt: "2026-01-01T00:00:01.000Z",
+          },
+        });
+
+        yield* eventStore.append({
+          type: "thread.message-sent",
+          eventId: EventId.make("evt-stats-3"),
+          aggregateKind: "thread",
+          aggregateId: ThreadId.make("thread-stats"),
+          occurredAt: now,
+          commandId: CommandId.make("cmd-stats-3"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-stats-3"),
+          metadata: {},
+          payload: {
+            threadId: ThreadId.make("thread-stats"),
+            messageId: MessageId.make("assistant-stats"),
+            role: "assistant",
+            text: " world",
+            turnId: TurnId.make("turn-stats"),
+            streaming: true,
+            createdAt: "2026-01-01T00:00:02.000Z",
+            updatedAt: "2026-01-01T00:00:02.000Z",
+          },
+        });
+
+        yield* projectionPipeline.bootstrap;
+
+        const messageRows = yield* sql<{
+          readonly text: string;
+          readonly timeToFirstTokenMs: number | null;
+          readonly averageTokensPerSecond: number | null;
+          readonly totalTokens: number | null;
+          readonly inputTokens: number | null;
+        }>`
+        SELECT
+          text,
+          time_to_first_token_ms AS "timeToFirstTokenMs",
+          average_tokens_per_second AS "averageTokensPerSecond",
+          total_tokens AS "totalTokens",
+          input_tokens AS "inputTokens"
+        FROM projection_thread_messages
+        WHERE message_id = 'assistant-stats'
+      `;
+        assert.deepEqual(messageRows, [
+          {
+            text: "hello world",
+            timeToFirstTokenMs: 1200,
+            averageTokensPerSecond: 25,
+            totalTokens: 150,
+            inputTokens: 100,
+          },
+        ]);
+      }),
+  );
+
+  it.effect(
     "resolves turn-count conflicts when checkpoint completion rewrites provisional turns",
     () =>
       Effect.gen(function* () {

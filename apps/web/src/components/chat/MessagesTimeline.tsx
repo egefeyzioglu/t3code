@@ -17,7 +17,7 @@ import {
 } from "react";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { deriveTimelineEntries, formatElapsed } from "../../session-logic";
-import { type TurnDiffSummary } from "../../types";
+import { type ChatMessage, type TurnDiffSummary } from "../../types";
 import { summarizeTurnDiffStats } from "../../lib/turnDiffTree";
 import ChatMarkdown from "../ChatMarkdown";
 import {
@@ -67,6 +67,7 @@ import {
 } from "./userMessageTerminalContexts";
 import { SkillInlineText } from "./SkillInlineText";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
+import { formatContextWindowTokens } from "../../lib/contextWindow";
 
 // ---------------------------------------------------------------------------
 // Context — shared state consumed by every row component via useContext.
@@ -439,6 +440,7 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
                 row.message.createdAt,
                 formatElapsed(row.durationStart, row.message.completedAt),
                 ctx.timestampFormat,
+                formatResponseStats(row.message.responseStats),
               )
             )}
           </p>
@@ -995,13 +997,52 @@ function formatLiveMessageMetaNow(
   return formatMessageMeta(createdAt, elapsed, timestampFormat);
 }
 
+function formatMsShort(value: number): string {
+  if (!Number.isFinite(value) || value < 0) {
+    return "0ms";
+  }
+  if (value < 1_000) {
+    return `${Math.round(value)}ms`;
+  }
+  return `${(value / 1_000).toFixed(value >= 10_000 ? 0 : 1).replace(/\.0$/, "")}s`;
+}
+
+function formatResponseStats(stats: ChatMessage["responseStats"] | undefined): string | undefined {
+  if (!stats) {
+    return undefined;
+  }
+
+  const parts = [
+    stats.timeToFirstTokenMs !== undefined
+      ? `TTFT ${formatMsShort(stats.timeToFirstTokenMs)}`
+      : undefined,
+    stats.averageTokensPerSecond !== undefined
+      ? `${stats.averageTokensPerSecond.toFixed(stats.averageTokensPerSecond >= 10 ? 1 : 2)} tok/s`
+      : undefined,
+    stats.totalTokens !== undefined
+      ? `${formatContextWindowTokens(stats.totalTokens)} tokens`
+      : undefined,
+    stats.inputTokens !== undefined
+      ? `${formatContextWindowTokens(stats.inputTokens)} input`
+      : undefined,
+  ].filter((part) => part !== undefined);
+
+  return parts.length > 0 ? parts.join(" · ") : undefined;
+}
+
+// TODO: statsForNerds should be string|null
 function formatMessageMeta(
   createdAt: string,
   duration: string | null,
   timestampFormat: TimestampFormat,
+  statsForNerds?: string,
 ): string {
-  if (!duration) return formatTimestamp(createdAt, timestampFormat);
-  return `${formatTimestamp(createdAt, timestampFormat)} • ${duration}`;
+  const messageMetaElems = [
+    formatTimestamp(createdAt, timestampFormat),
+    duration ? duration : undefined,
+    statsForNerds ? statsForNerds : undefined,
+  ].filter((e) => e !== undefined);
+  return messageMetaElems.join(" • ");
 }
 
 function workToneIcon(tone: TimelineWorkEntry["tone"]): {

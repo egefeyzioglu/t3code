@@ -16,6 +16,7 @@ import type {
   CheckpointRef,
   ProviderInteractionMode,
   RuntimeMode,
+  AssistantMessageResponseStats,
 } from "@t3tools/contracts";
 
 export type SessionPhase = "disconnected" | "connecting" | "ready" | "running";
@@ -52,6 +53,7 @@ export interface ChatMessage {
   createdAt: string;
   completedAt?: string | undefined;
   streaming: boolean;
+  responseStats?: AssistantMessageResponseStats | undefined;
 }
 
 export interface ProposedPlan {

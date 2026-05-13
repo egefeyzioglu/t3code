@@ -111,4 +111,75 @@ layer("ProjectionThreadMessageRepository", (it) => {
       assert.deepEqual(rows[0]?.attachments, []);
     }),
   );
+
+  it.effect("persists and updates response stats independently", () =>
+    Effect.gen(function* () {
+      const repository = yield* ProjectionThreadMessageRepository;
+      const threadId = ThreadId.make("thread-response-stats");
+      const messageId = MessageId.make("message-response-stats");
+      const createdAt = "2026-02-28T19:20:00.000Z";
+
+      yield* repository.upsert({
+        messageId,
+        threadId,
+        turnId: null,
+        role: "assistant",
+        text: "initial",
+        responseStats: {
+          timeToFirstTokenMs: 300,
+          averageTokensPerSecond: 25,
+          totalTokens: 125,
+          inputTokens: 100,
+        },
+        isStreaming: false,
+        createdAt,
+        updatedAt: "2026-02-28T19:20:01.000Z",
+      });
+
+      yield* repository.upsert({
+        messageId,
+        threadId,
+        turnId: null,
+        role: "assistant",
+        text: "updated",
+        isStreaming: false,
+        createdAt,
+        updatedAt: "2026-02-28T19:20:02.000Z",
+      });
+
+      let rowById = yield* repository.getByMessageId({ messageId });
+      assert.equal(rowById._tag, "Some");
+      if (rowById._tag === "Some") {
+        assert.deepEqual(rowById.value.responseStats, {
+          timeToFirstTokenMs: 300,
+          averageTokensPerSecond: 25,
+          totalTokens: 125,
+          inputTokens: 100,
+        });
+      }
+
+      yield* repository.updateResponseStats({
+        messageId,
+        responseStats: {
+          timeToFirstTokenMs: 350,
+          averageTokensPerSecond: 30,
+          totalTokens: 150,
+          inputTokens: 110,
+        },
+        updatedAt: "2026-02-28T19:20:03.000Z",
+      });
+
+      rowById = yield* repository.getByMessageId({ messageId });
+      assert.equal(rowById._tag, "Some");
+      if (rowById._tag === "Some") {
+        assert.equal(rowById.value.updatedAt, "2026-02-28T19:20:03.000Z");
+        assert.deepEqual(rowById.value.responseStats, {
+          timeToFirstTokenMs: 350,
+          averageTokensPerSecond: 30,
+          totalTokens: 150,
+          inputTokens: 110,
+        });
+      }
+    }),
+  );
 });
