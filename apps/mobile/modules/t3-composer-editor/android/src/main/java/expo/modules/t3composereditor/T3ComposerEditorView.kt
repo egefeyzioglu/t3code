@@ -469,7 +469,23 @@ private class SelectionAwareEditText(context: Context) : EditText(context) {
   var scrollEnabled = true
   private val keepSelectionVisibleRunnable = Runnable {
     if (scrollEnabled && isFocused) {
-      bringPointIntoView(selectionEnd.coerceAtLeast(0))
+      val textLayout = layout ?: return@Runnable
+      val offset = selectionEnd.coerceIn(0, text?.length ?: 0)
+      val line = textLayout.getLineForOffset(offset)
+      val viewportHeight = height - compoundPaddingTop - compoundPaddingBottom
+      if (viewportHeight <= 0) return@Runnable
+
+      val lineTop = textLayout.getLineTop(line)
+      val lineBottom = textLayout.getLineBottom(line)
+      val targetScrollY = when {
+        lineBottom > scrollY + viewportHeight -> lineBottom - viewportHeight
+        lineTop < scrollY -> lineTop
+        else -> scrollY
+      }.coerceIn(0, (textLayout.height - viewportHeight).coerceAtLeast(0))
+
+      if (targetScrollY != scrollY) {
+        scrollTo(scrollX, targetScrollY)
+      }
     }
   }
 
@@ -488,6 +504,9 @@ private class SelectionAwareEditText(context: Context) : EditText(context) {
   override fun onSelectionChanged(selStart: Int, selEnd: Int) {
     super.onSelectionChanged(selStart, selEnd)
     selectionListener?.invoke(selStart, selEnd)
+    if (isAttachedToWindow) {
+      keepSelectionVisible()
+    }
   }
 
   override fun onTextContextMenuItem(id: Int): Boolean {
