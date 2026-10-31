@@ -5,6 +5,7 @@ import { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { EditorState, TextSelection } from "@tiptap/pm/state";
 import { splitBlockKeepMarks } from "@tiptap/pm/commands";
 import { describe, expect, it, onTestFinished } from "vite-plus/test";
+import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 
 import {
   collapseExpandedComposerCursor,
@@ -19,7 +20,10 @@ import {
   ComposerBlockExtensions,
   ComposerCodeBlockExtension,
   ComposerListExtensions,
+  ComposerBoldExtension,
   ComposerCodeExtension,
+  ComposerItalicExtension,
+  ComposerStrikeExtension,
   ComposerTaskItemExtension,
   flatToMarkdown,
   flatToPm,
@@ -91,6 +95,28 @@ function roundTrip(value: string) {
 }
 
 describe("editable math source", () => {
+  it.each(["app/routes/posts.$postId.tsx", "pages/posts/[id].tsx"])(
+    "keeps a mentioned file whose name looks like TeX as a chip: %s",
+    (path) => {
+      const source = `fix ${serializeComposerFileLink(path)} please`;
+      const map = roundTrip(source);
+      expect(map.value).toBe(source);
+      expect(
+        map.runs.filter((run) => run.kind === "token" && run.nodeName === "composer-mention"),
+      ).toHaveLength(1);
+    },
+  );
+
+  it.each([
+    "before $x + @README.md$ after",
+    "before \\(x + @README.md\\) after",
+    "\\[x + @README.md\\] after",
+  ])("keeps a mention that ends a formula inside the formula: %s", (source) => {
+    const map = roundTrip(source);
+    expect(map.value).toBe(source);
+    expect(map.runs.some((run) => run.kind === "token")).toBe(false);
+  });
+
   it.each([
     "Area $x_i^2$ after",
     "before \\(\\frac{1}{2}\\) after",
@@ -980,7 +1006,17 @@ describe("inline code entry", () => {
     const editor = new Editor({
       element: null,
       extensions: [
-        StarterKit.configure({ code: false, codeBlock: false, trailingNode: false }),
+        StarterKit.configure({
+          bold: false,
+          code: false,
+          codeBlock: false,
+          italic: false,
+          strike: false,
+          trailingNode: false,
+        }),
+        ComposerBoldExtension,
+        ComposerItalicExtension,
+        ComposerStrikeExtension,
         ComposerCodeExtension,
         ComposerCodeBlockExtension,
         stubAtom("composer-mention", { path: { default: "" }, source: { default: "" } }),
@@ -1091,5 +1127,71 @@ describe("inline code entry", () => {
     expect(editor.state.doc.toJSON()).toEqual(before);
     editor.commands.setTextSelection(editor.state.doc.content.size - 1);
     expect(editor.state.doc.toJSON()).toEqual(before);
+  });
+
+  function marked(editor: Editor, name: string) {
+    const text: string[] = [];
+    editor.state.doc.descendants((node) => {
+      if (node.isText && node.marks.some((mark) => mark.type.name === name)) {
+        text.push(node.text ?? "");
+      }
+    });
+    return text;
+  }
+
+  /** Types `text` into a backtick pair and steps the caret out so it formats. */
+  function typeCode(editor: Editor, text: string) {
+    const offset = editor.state.selection.from;
+    type(editor, "``");
+    editor.commands.setTextSelection(offset + 1);
+    type(editor, text);
+    editor.commands.setTextSelection(offset + text.length + 2);
+    expect(marked(editor, "code")).toContain(text);
+  }
+
+  it.each([
+    { mark: "italic", open: "*" },
+    { mark: "bold", open: "**" },
+    { mark: "strike", open: "~~" },
+  ])("keeps a $mark delimiter inside an earlier code span literal", ({ mark, open }) => {
+    const editor = editorFor();
+    typeCode(editor, `${open}foo`);
+    type(editor, ` bar \`${open}`);
+    expect(serializeEditorDoc(editor.state.doc).value).toBe(`\`${open}foo\` bar \`${open}`);
+    expect(marked(editor, mark)).toEqual([]);
+    expect(marked(editor, "code")).toEqual([`${open}foo`]);
+  });
+
+  it.each([
+    { mark: "italic", open: "*" },
+    { mark: "bold", open: "**" },
+    { mark: "strike", open: "~~" },
+  ])("still wraps a code span in $mark when both delimiters are outside it", ({ mark, open }) => {
+    const editor = editorFor();
+    type(editor, open);
+    typeCode(editor, "foo");
+    type(editor, ` bar${open}`);
+    expect(serializeEditorDoc(editor.state.doc).value).toBe(`${open}\`foo\` bar${open}`);
+    expect(marked(editor, mark)).toEqual(["foo", " bar"]);
+
+    editor.commands.setContent({
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            { type: "text", text: `${open}foo tail ` },
+            { type: "text", text: "x", marks: [{ type: "code" }] },
+          ],
+        },
+      ],
+    });
+    editor.commands.setTextSelection({
+      from: open.length + 4,
+      to: editor.state.doc.content.size - 1,
+    });
+    type(editor, open);
+    expect(serializeEditorDoc(editor.state.doc).value).toBe(`${open}foo${open}`);
+    expect(marked(editor, mark)).toEqual(["foo"]);
   });
 });
