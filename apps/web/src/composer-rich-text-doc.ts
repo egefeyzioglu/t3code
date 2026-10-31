@@ -147,13 +147,8 @@ export const ComposerCodeExtension = Code.extend({
   },
 });
 
-/**
- * Tiptap's mark rules only skip a match overlapping a mark that excludes theirs,
- * and the composer's code mark excludes just itself, so a closing `*` matched a
- * `*` inside an earlier code span. A delimiter in a code span is literal, so the
- * rule needs the opening delimiter outside code; the caret guard covers the close.
- */
-function markInputRuleOutsideCode(find: RegExp, type: MarkType): InputRule {
+// Code permits nested emphasis, so Tiptap's exclusion check cannot protect literal delimiters.
+function markInputRuleOutsideCode(find: RegExp, type: MarkType) {
   const rule = markInputRule({ find, type });
   return new InputRule({
     find,
