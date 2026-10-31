@@ -161,7 +161,7 @@ function markInputRuleOutsideCode(find: RegExp, type: MarkType) {
       if (
         code &&
         (state.doc.rangeHasMark(range.from + match[0].search(/\S/), textStart, code) ||
-          state.doc.rangeHasMark(textEnd, range.to, code))
+          state.doc.rangeHasMark(textEnd, state.selection.from, code))
       ) {
         return null;
       }

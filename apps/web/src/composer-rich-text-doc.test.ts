@@ -1173,5 +1173,25 @@ describe("inline code entry", () => {
     type(editor, ` bar${open}`);
     expect(serializeEditorDoc(editor.state.doc).value).toBe(`${open}\`foo\` bar${open}`);
     expect(marked(editor, mark)).toEqual(["foo", " bar"]);
+
+    editor.commands.setContent({
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            { type: "text", text: `${open}foo tail ` },
+            { type: "text", text: "x", marks: [{ type: "code" }] },
+          ],
+        },
+      ],
+    });
+    editor.commands.setTextSelection({
+      from: open.length + 4,
+      to: editor.state.doc.content.size - 1,
+    });
+    type(editor, open);
+    expect(serializeEditorDoc(editor.state.doc).value).toBe(`${open}foo${open}`);
+    expect(marked(editor, mark)).toEqual(["foo"]);
   });
 });
